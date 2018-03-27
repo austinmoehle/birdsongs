@@ -107,8 +107,9 @@ def test(args):
     # each class in the training set to divert to the validation set.
     logging.info('Loading dataset from `test_dir`...')
     test_filenames, test_labels = list_images(test_dir)
+    num_test = len(train_filenames)
     logging.info("%d test images over %d classes found." %
-                 (len(test_filenames), len(set(test_labels))))
+                 (num_test, len(set(test_labels))))
     # Number of classes used by Inception is set of labels plus 1 (dummy class).
     num_classes = len(set(test_labels)) + 1
     top_k = 5
@@ -158,13 +159,12 @@ def test(args):
         val_dataset = val_dataset.map(_parse_function,
                                       num_parallel_calls=args['num_workers'])
         batched_val_dataset = val_dataset.batch(args['batch_size'])
-
         iterator = tf.contrib.data.Iterator.from_structure(
             batched_val_dataset.output_types,
             batched_val_dataset.output_shapes)
         images, labels = iterator.get_next()
-
         val_init_op = iterator.make_initializer(batched_val_dataset)
+
         is_training = tf.placeholder(tf.bool)
 
         # Load the Inception-v3 model from the Slim library.
@@ -178,7 +178,7 @@ def test(args):
 
         # Restore all weights variables in the model.
         # Calling function `restore_fn(sess)` will load the pretrained weights
-        # from the checkpoint file at args['model_path'].
+        # from the checkpoint file at `restore_dir`.
         all_variables = tf.contrib.framework.get_variables_to_restore()
         restore_fn = tf.contrib.framework.assign_from_checkpoint_fn(
             tf.train.latest_checkpoint(restore_dir), all_variables)
@@ -196,7 +196,7 @@ def test(args):
         kw_probabilities = end_points['Predictions']
         prediction = tf.to_int32(tf.argmax(logits, 1))
         correct_prediction = tf.equal(prediction, labels)
-        
+
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
         top5_accuracy = tf.reduce_mean(tf.cast(
             tf.nn.in_top_k(end_points['Logits'], labels, top_k), tf.float32))
@@ -216,7 +216,7 @@ def test(args):
         total_loss, count = 0, 0
         num_correct, num_samples = 0, 0
         top5_acc = 0
-        while True:
+        for i in range(num_test / args['batch_size']):
             try:
                 this_loss, correct_pred, top5_sample_acc = sess.run(
                     [loss, correct_prediction, top5_accuracy],
@@ -227,6 +227,7 @@ def test(args):
                 total_loss += this_loss
                 count += 1
             except tf.errors.OutOfRangeError:
+                logging.info('OutOfRangeError during evaluation.')
                 break
 
         # Calculate the fraction of images that were correctly classified.

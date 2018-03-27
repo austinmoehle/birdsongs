@@ -204,8 +204,10 @@ def finetune(args):
     logging.info('Loading dataset from `train_dir`...')
     train_filenames, train_labels, val_filenames, val_labels = \
         list_images_split(args['train_dir'], num_split=2)
+    num_train = len(train_filenames)
+    num_val = len(val_filenames)
     logging.info("%d train images and %d validation images found." %
-                 (len(train_filenames), len(val_filenames)))
+                 (num_train, num_val))
 
     # Number of classes is set of training labels plus one (dummy class).
     num_classes = len(set(train_labels)) + 1
@@ -373,12 +375,14 @@ def finetune(args):
             sess.run(train_init_op)
 
             # Continue training on this dataset until we run out of batches.
-            while True:
+            for i in range(num_train / args['batch_size']):
                 try:
-                    _, summary_logits = sess.run([logits_train_op, merged], {is_training: True})
+                    _, summary_logits = sess.run([logits_train_op, merged],
+                                                 {is_training: True})
+                    summary_writer_logits.add_summary(summary_logits, epoch)
                 except tf.errors.OutOfRangeError:
+                    logging.info('OutOfRangeError during training.')
                     break
-            summary_writer_logits.add_summary(summary_logits, epoch)
 
             # Save the model every few epochs.
             if epoch % 20 == 0:
@@ -390,7 +394,7 @@ def finetune(args):
                 # Check training accuracy and loss.
                 sess.run(train_init_op)
                 num_correct, num_samples, total_loss, count = 0, 0, 0, 0
-                while True:
+                for i in range(num_train / args['batch_size']):
                     try:
                         this_loss, correct_pred =
                             sess.run([loss, correct_prediction],
@@ -400,22 +404,24 @@ def finetune(args):
                         total_loss += this_loss
                         count += 1
                     except tf.errors.OutOfRangeError:
+                        logging.info('OutOfRangeError while checking train acc.')
                         break
                 # Find the fraction of spectrograms that were correctly classified.
                 train_acc = float(num_correct) / num_samples
                 # Calculate the average loss.
                 train_loss = float(total_loss) / count
 
-                # Check training accuracy and loss.
+                # Check validation accuracy and loss.
                 sess.run(val_init_op)
                 num_correct, num_samples = 0, 0
-                while True:
+                for i in range(num_val / args['batch_size']):
                     try:
                         correct_pred = sess.run(correct_prediction,
                                                 {is_training: False})
                         num_correct += correct_pred.sum()
                         num_samples += correct_pred.shape[0]
                     except tf.errors.OutOfRangeError:
+                        logging.info('OutOfRangeError while checking val acc.')
                         break
                 # Find the fraction of spectrograms that were correctly classified.
                 val_acc = float(num_correct) / num_samples
@@ -431,13 +437,15 @@ def finetune(args):
         for epoch in range(args['num_epochs2']):
             logging.info('Starting epoch %d / %d' % (epoch+1, args['num_epochs2']))
             sess.run(train_init_op)
-            while True:
+            for i in range(num_train / args['batch_size']):
                 try:
                     _, summary_full = sess.run([full_train_op, merged],
                                                {is_training: True})
+                    summary_writer_full.add_summary(summary_full, epoch)
                 except tf.errors.OutOfRangeError:
+                    logging.info('OutOfRangeError during training.')
                     break
-            summary_writer_full.add_summary(summary_full, epoch)
+
             if epoch % 20 == 0:
                 logging.info('Saving model to %s', save_path_full))
                 saver.save(sess, save_path_full, global_step=epoch)
@@ -447,7 +455,7 @@ def finetune(args):
                 # Check training accuracy and loss.
                 sess.run(train_init_op)
                 num_correct, num_samples, total_loss, count = 0, 0, 0, 0
-                while True:
+                for i in range(num_train / args['batch_size']):
                     try:
                         this_loss, correct_pred =
                             sess.run([loss, correct_prediction],
@@ -457,22 +465,24 @@ def finetune(args):
                         total_loss += this_loss
                         count += 1
                     except tf.errors.OutOfRangeError:
+                        logging.info('OutOfRangeError while checking train acc.')
                         break
                 # Calculate the fraction of images that were correctly classified.
                 train_acc = float(num_correct) / num_samples
                 # Calculate the average loss.
                 train_loss = float(total_loss) / count
 
-                # Check training accuracy and loss.
+                # Check validation accuracy and loss.
                 sess.run(val_init_op)
                 num_correct, num_samples = 0, 0
-                while True:
+                for i in range(num_val / args['batch_size']):
                     try:
                         correct_pred = sess.run(correct_prediction,
                                                 {is_training: False})
                         num_correct += correct_pred.sum()
                         num_samples += correct_pred.shape[0]
                     except tf.errors.OutOfRangeError:
+                        logging.info('OutOfRangeError while checking val acc.')
                         break
                 # Calculate the fraction of images that were correctly classified.
                 val_acc = float(num_correct) / num_samples
