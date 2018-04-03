@@ -182,26 +182,30 @@ def finetune(args):
     save_dir = os.path.join(args['run_dir'], 'save')          # Save checkpoints
     summary_dir = os.path.join(args['run_dir'], 'summary')    # Save summaries
     params_path = os.path.join(args['run_dir'], 'params.txt') # Save hyperparams
-    # Location checkpoint to restore from if `args['restore']` is True:
-    restore_dir = args['restore_dir']
 
-    save_dir_logits = os.path.join(args['save_dir'], 'logits')
-    save_dir_full = os.path.join(args['save_dir'], 'full')
     summary_dir_logits = os.path.join(args['summary_dir'], 'logits')
     summary_dir_full = os.path.join(args['summary_dir'], 'full')
 
-    for directory in [save_dir_logits, save_dir_full,
-                      summary_dir_logits, summary_dir_full]:
+    for directory in [save_dir, summary_dir_logits, summary_dir_full]:
         if not os.path.exists(directory):
             os.makedirs(directory)
 
-    save_path_logits = os.path.join(save_dir_logits, 'logits')
-    save_path_full = os.path.join(save_dir_full, 'full')
+    save_path = os.path.join(save_dir, 'full')
+
+    # Find directory or path containing checkpoint to restore:
+    if args['restore_path'] is not None:
+        use_restore_path = True
+        restore_path = args['restore_path']
+    else:
+        use_restore_path = False
+        restore_dir = args['restore_dir']
+        if restore_dir is None:
+            restore_dir = save_dir  # Default to most recently saved checkpoint
 
     # Get the list of filenames and corresponding list of labels for training
-    # and validation. 'num_split' is the number of spectrograms from
+    # and validation. `num_split` is the number of spectrograms from
     # each class in the training set to divert to the validation set.
-    logging.info('Loading dataset from `train_dir`...')
+    logging.info('Loading dataset from %s...' % train_dir)
     train_filenames, train_labels, val_filenames, val_labels = \
         list_images_split(args['train_dir'], num_split=2)
     num_train = len(train_filenames)
@@ -294,20 +298,26 @@ def finetune(args):
                 dropout_keep_prob=args['dropout_keep_prob'])
 
         # Restore only the layers before Logits/AuxLogits.
-        # Calling function `init_fn(sess)` will load the pretrained weights
-        # from the checkpoint file at args['model_path'].
+        # Calling `init_fn(sess)` will load the pretrained weights from the
+        # checkpoint file at args['model_path'].
         layers_exclude = ['InceptionV3/Logits', 'InceptionV3/AuxLogits']
+        ## layers_exclude += ['logits_epoch', 'full_epoch']
         variables_to_restore = tf.contrib.framework.get_variables_to_restore(
             exclude=layers_exclude)
         init_fn = tf.contrib.framework.assign_from_checkpoint_fn(
-            args['model_path'], variables_to_restore)
+            args['init_path'], variables_to_restore)
 
         # Restore all weights variables in the model.
         # Calling function `restore_fn(sess)` will load the pretrained weights
         # from the checkpoint file at args['model_path'].
+        ## vars_exclude = ['logits_epoch', 'full_epoch']
+        ## all_variables = tf.contrib.framework.get_variables_to_restore(
+        ##     exclude=vars_exclude)
         all_variables = tf.contrib.framework.get_variables_to_restore()
-        restore_fn = tf.contrib.framework.assign_from_checkpoint_fn(
+        restore_dir_fn = tf.contrib.framework.assign_from_checkpoint_fn(
             tf.train.latest_checkpoint(restore_dir), all_variables)
+        restore_path_fn = tf.contrib.framework.assign_from_checkpoint_fn(
+            restore_path, all_variables)
 
         # Use 'logits_init' to initialize the final fully-connected layer
         # (logits) for finetuning.
@@ -328,13 +338,13 @@ def finetune(args):
         # Create an op to train only the re-initialized last (FC) layer.
         # We run minimize the loss only with respect to the weights
         # in this layer (weights and bias).
-        logits_optimizer = tf.train.AdamOptimizer(learning_rate=args['learning_rate1'],
+        logits_optimizer = tf.train.AdamOptimizer(learning_rate=args['learning_rate'],
                                                   epsilon=args['epsilon'])
         logits_train_op = logits_optimizer.minimize(loss, var_list=logits_variables)
 
         # Create an op to train all model layers.
         # We run minimize the loss with respect to all weight variables.
-        full_optimizer = tf.train.AdamOptimizer(learning_rate=args['learning_rate2'],
+        full_optimizer = tf.train.AdamOptimizer(learning_rate=args['learning_rate'],
                                                 epsilon=args['epsilon'])
         full_train_op = full_optimizer.minimize(loss)
 
@@ -346,55 +356,83 @@ def finetune(args):
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
         tf.summary.scalar('accuracy', accuracy)
 
-        # Merge all summary nodes and create a `Saver` op to save and restore.
+        # Keep track of the global step/epoch.
+        logits_epoch = tf.Variable(0, trainable=False, name='logits_epoch')
+        reset_logits_epoch = tf.assign(logits_epoch, 0)
+        increment_logits_epoch = tf.assign_add(logits_epoch, 1,
+                                              name='increment_logits_epoch')
+        full_epoch = tf.Variable(0, trainable=False, name='full_epoch')
+        reset_full_epoch = tf.assign(full_epoch, 0)
+        increment_full_epoch = tf.assign_add(full_epoch, 1,
+                                            name='increment_full_epoch')
+
+        # Merge all summary nodes and create a Saver op to save and restore.
         merged = tf.summary.merge_all()
         saver = tf.train.Saver(tf.global_variables(), max_to_keep=500)
 
         init = tf.global_variables_initializer()
         tf.get_default_graph().finalize()
 
+
     with tf.Session(graph=g1) as sess:
         sess.run(init)
-
-        if args['restore']:
-            logging.info('Restoring model from %s.', args['restore_dir'])
-            restore_fn(sess) # Restore all weights from `save_dir`.
-        else:
-            logging.info('Restoring model (except final layer) from %s.',
-                         args['model_path'])
+        # Initialize or restore model weights from the appropriate checkpoint.
+        if args['initialize']:
+            logging.info('Restoring model (except final layer) from %s...' %
+                         args['init_path'])
             init_fn(sess)    # Load pretrained weights from ImageNet checkpoint.
             sess.run(logits_init)  # Initialize the new final (FC) layer.
+        elif use_restore_path:
+            logging.info('Restoring model from %s...' % restore_path)
+            restore_path_fn(sess)
+        else:
+            logging.info('Restoring model from latest checkpoint in %s...' %
+                         restore_dir)
+            restore_dir_fn(sess)
 
-        summary_writer_logits = tf.summary.FileWriter(summary_dir_logits, sess.graph)
-        summary_writer_full = tf.summary.FileWriter(summary_dir_full, sess.graph)
+        summary_writer_logits = tf.summary.FileWriter(summary_dir_logits,
+                                                      sess.graph)
+        summary_writer_full = tf.summary.FileWriter(summary_dir_full,
+                                                    sess.graph)
 
+        logits_step, full_step = sess.run([logits_epoch, full_epoch])
+        current_step = logits_step + full_step
+        total_epochs = current_step + args['num_epochs']
         # Update only the last (FC) layer for multiple epochs.
-        for epoch in range(args['num_epochs1']):
-            logging.info('Starting epoch %d / %d' % (epoch+1, args['num_epochs1']))
+        for epoch in range(current_step, total_epochs):
+            logging.info('Starting epoch %d / %d' % (epoch+1, total_epochs+1))
             # Initialize the data iterator on the training dataset.
             sess.run(train_init_op)
-
             # Continue training on this dataset until we run out of batches.
-            for i in range(num_train / args['batch_size']):
+            for i in range(num_train // args['batch_size']):
                 try:
-                    _, summary_logits = sess.run([logits_train_op, merged],
-                                                 {is_training: True})
-                    summary_writer_logits.add_summary(summary_logits, epoch)
+                    if args['freeze_conv_layers']:
+                        _, summary_logits, logits_step =
+                            sess.run([logits_train_op, merged, logits_epoch],
+                                     {is_training: True})
+                        summary_writer_logits.add_summary(summary_logits,
+                                                          logits_step)
+                    else:
+                        _, summary_full, full_step =
+                            sess.run([full_train_op, merged, full_epoch],
+                                     {is_training: True})
+                        summary_writer_full.add_summary(summary_full,
+                                                        full_step)
                 except tf.errors.OutOfRangeError:
                     logging.info('OutOfRangeError during training.')
                     break
 
             # Save the model every few epochs.
-            if epoch % 20 == 0:
-                logging.info('Saving model to %s', save_path_logits))
-                saver.save(sess, save_path_logits, global_step=epoch)
+            if epoch % 20 == 0 or epoch == total_epochs-1:
+                logging.info('Saving model to %s.', save_path))
+                saver.save(sess, save_path, global_step=epoch)
 
             # Check accuracy on the training and validation sets.
-            if epoch % 10 == 0:
+            if epoch % 10 == 0 or epoch == total_epochs-1:
                 # Check training accuracy and loss.
                 sess.run(train_init_op)
                 num_correct, num_samples, total_loss, count = 0, 0, 0, 0
-                for i in range(num_train / args['batch_size']):
+                for i in range(num_train // args['batch_size']):
                     try:
                         this_loss, correct_pred =
                             sess.run([loss, correct_prediction],
@@ -414,7 +452,7 @@ def finetune(args):
                 # Check validation accuracy and loss.
                 sess.run(val_init_op)
                 num_correct, num_samples = 0, 0
-                for i in range(num_val / args['batch_size']):
+                for i in range(num_val // args['batch_size']):
                     try:
                         correct_pred = sess.run(correct_prediction,
                                                 {is_training: False})
@@ -429,85 +467,33 @@ def finetune(args):
                 logging.info('Train Accuracy: %f' % train_acc)
                 logging.info('Val Accuracy: %f' % val_acc)
 
-        logging.info('Final save of logits training to %s', save_path_logits))
-        saver.save(sess, save_path_logits, global_step=args['num_epochs1'])
-
-        # Continue to train the model, this time modifying the weights in all
-        # layers (entire net).
-        for epoch in range(args['num_epochs2']):
-            logging.info('Starting epoch %d / %d' % (epoch+1, args['num_epochs2']))
-            sess.run(train_init_op)
-            for i in range(num_train / args['batch_size']):
-                try:
-                    _, summary_full = sess.run([full_train_op, merged],
-                                               {is_training: True})
-                    summary_writer_full.add_summary(summary_full, epoch)
-                except tf.errors.OutOfRangeError:
-                    logging.info('OutOfRangeError during training.')
-                    break
-
-            if epoch % 20 == 0:
-                logging.info('Saving model to %s', save_path_full))
-                saver.save(sess, save_path_full, global_step=epoch)
-
-            # Check accuracy on the train and val sets every few epochs
-            if epoch % 20 == 0 or epoch == args['num_epochs2'] - 1:
-                # Check training accuracy and loss.
-                sess.run(train_init_op)
-                num_correct, num_samples, total_loss, count = 0, 0, 0, 0
-                for i in range(num_train / args['batch_size']):
-                    try:
-                        this_loss, correct_pred =
-                            sess.run([loss, correct_prediction],
-                                     {is_training: False})
-                        num_correct += correct_pred.sum()
-                        num_samples += correct_pred.shape[0]
-                        total_loss += this_loss
-                        count += 1
-                    except tf.errors.OutOfRangeError:
-                        logging.info('OutOfRangeError while checking train acc.')
-                        break
-                # Calculate the fraction of images that were correctly classified.
-                train_acc = float(num_correct) / num_samples
-                # Calculate the average loss.
-                train_loss = float(total_loss) / count
-
-                # Check validation accuracy and loss.
-                sess.run(val_init_op)
-                num_correct, num_samples = 0, 0
-                for i in range(num_val / args['batch_size']):
-                    try:
-                        correct_pred = sess.run(correct_prediction,
-                                                {is_training: False})
-                        num_correct += correct_pred.sum()
-                        num_samples += correct_pred.shape[0]
-                    except tf.errors.OutOfRangeError:
-                        logging.info('OutOfRangeError while checking val acc.')
-                        break
-                # Calculate the fraction of images that were correctly classified.
-                val_acc = float(num_correct) / num_samples
-                logging.info('Train Loss: %f' % train_loss)
-                logging.info('Train Accuracy: %f' % train_acc)
-                logging.info('Val Accuracy: %f' % val_acc)
-
-        # Save the final model for testing and further training.
-        save_path = saver.save(sess, save_path_full,
-                               global_step=(args['num_epochs2'] - 1))
-        logging.info("Final model saved in checkpoint file: %s" % save_path_full)
-
-        # Save this run's hyperparameters and final results (loss,
-        # train/val accuracy) to a params file.
+        # Save this run's hyperparameters and final results (loss, train and
+        # validation accuracies) to a params file.
+        params_path = os.path.join(args['run_dir'], 'params.txt')
+        logits_step, full_step = sess.run([logits_epoch, full_epoch])
         params = {}
-        params['trial_dir'] = 'trial_dir'
-        params['num_epochs1'] = args['num_epochs1']
-        params['num_epochs2'] = args['num_epochs2']
-        params['learning_rate1'] = args['learning_rate1']
-        params['learning_rate2'] = args['learning_rate2']
+        params['run_dir'] = args['run_dir']
+        params['logits_epochs'] = logits_step
+        params['full_epochs'] = full_step
+        params['learning_rate'] = args['learning_rate']
+        params['freeze_conv_layers'] = args['freeze_conv_layers']
         params['epsilon'] = args['epsilon']
         params['loss'] = train_loss
         params['train_accuracy'] = train_acc
         params['val_accuracy'] = val_acc
-        write_params_file(args['params_path'], params)
-        logging.info("Parameters and results saved in params file: %s",
-                     args['params_path'])
+        write_params_file(params_path, params)
+        logging.info("Parameters and results saved in params file: %s" %
+                     params_path)
+
+        # Record lists of trainable variables and regularization losses to
+        # verify that all components were included in training.
+        losses_path = os.path.join(args['run_dir'], 'regularization_losses.txt')
+        vars_path = os.path.join(args['run_dir'], 'trainable_variables.txt')
+        with tf.gfile.Open(losses_path, 'w') as f:
+            for item in tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES):
+                f.write('%s\n' % item.name)
+        with tf.gfile.Open(vars_path, 'w') as f:
+            for item in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES):
+                f.write('%s\n' % item.name)
+            
         # Done!

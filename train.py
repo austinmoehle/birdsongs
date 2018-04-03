@@ -52,24 +52,24 @@ parser.add_argument('--data_dir', default='data',
                     help="Directory containing `train/`, `test/`, `labels.txt`.")
 parser.add_argument('--run_dir', default='runs/0',
                     help="Directory to store training run.")
-parser.add_argument('--model_path', default='checkpoints/inception_v3.ckpt',
+parser.add_argument('--init_path', default='checkpoints/inception_v3.ckpt',
                     help="Pretrained checkpoint for initialization.")
-parser.add_argument('--restore', action='store_true',
-                    help="Whether to restore from savefile in `restore_dir`.")
-parser.add_argument('--restore_dir', default='runs/0/save/full',
-                    help="Location of trained model to restore if `restore`=True.")
+parser.add_argument('-i', '--initialize', action='store_true',
+                    help="Whether to initialize from pretrained checkpoint.")
+parser.add_argument('--restore_dir', default=None,
+                    help="Directory to restore from, if `initialize` is False.")
+parser.add_argument('--restore_path', default=None,
+                    help="Path of saved model to restore.")
 parser.add_argument('--batch_size', default=8, type=int,
                     help="Batch size.")
 parser.add_argument('--num_workers', default=4, type=int,
                     help="Number of workers.")
-parser.add_argument('--num_epochs1', default=20, type=int,
-                    help="Number of epochs to train final layer (logits).")
-parser.add_argument('--num_epochs2', default=20, type=int,
-                    help="Number of epochs to train full net.")
-parser.add_argument('--learning_rate1', default=1e-3, type=float,
-                    help="Learning rate for training of final layer (logits).")
-parser.add_argument('--learning_rate2', default=1e-5, type=float,
-                    help="Learning rate for full net training.")
+parser.add_argument('--num_epochs', default=20, type=int,
+                    help="Number of epochs to train.")
+parser.add_argument('-f', '--freeze_conv_layers', action='store_true',
+                    help="Whether to freeze convolutional layers during training.")
+parser.add_argument('--learning_rate', default=1e-5, type=float,
+                    help="Learning rate for training.")
 parser.add_argument('--epsilon', default=0.01, type=float,
                     help="Epsilon parameter for Adam optimizer.")
 parser.add_argument('--dropout_keep_prob', default=0.8, type=float,
@@ -83,7 +83,7 @@ args = parser.parse_args()
 def main():
     """Finetune Inception-v3 on the spectrogram dataset."""
     logging.basicConfig(level=logging.INFO)
-    logging.info("Beginning training using `birds_train.finetune`")
+    logging.info("Beginning training using `birds_train.finetune`...")
     birds_train.finetune(vars(args))
     logging.info("Training using `birds_train.finetune` complete.")
 
