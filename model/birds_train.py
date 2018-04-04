@@ -183,8 +183,8 @@ def finetune(args):
     summary_dir = os.path.join(args['run_dir'], 'summary')    # Save summaries
     params_path = os.path.join(args['run_dir'], 'params.txt') # Save hyperparams
 
-    summary_dir_logits = os.path.join(args['summary_dir'], 'logits')
-    summary_dir_full = os.path.join(args['summary_dir'], 'full')
+    summary_dir_logits = os.path.join(summary_dir, 'logits')
+    summary_dir_full = os.path.join(summary_dir, 'full')
 
     for directory in [save_dir, summary_dir_logits, summary_dir_full]:
         if not os.path.exists(directory):
@@ -193,12 +193,12 @@ def finetune(args):
     save_path = os.path.join(save_dir, 'full')
 
     # Find directory or path containing checkpoint to restore:
+    restore_path = args['restore_path']
+    restore_dir = args['restore_dir']
     if args['restore_path'] is not None:
         use_restore_path = True
-        restore_path = args['restore_path']
     else:
         use_restore_path = False
-        restore_dir = args['restore_dir']
         if restore_dir is None:
             restore_dir = save_dir  # Default to most recently saved checkpoint
 
@@ -207,7 +207,7 @@ def finetune(args):
     # each class in the training set to divert to the validation set.
     logging.info('Loading dataset from %s...' % train_dir)
     train_filenames, train_labels, val_filenames, val_labels = \
-        list_images_split(args['train_dir'], num_split=2)
+        list_images_split(train_dir, num_split=2)
     num_train = len(train_filenames)
     num_val = len(val_filenames)
     logging.info("%d train images and %d validation images found." %
@@ -276,11 +276,11 @@ def finetune(args):
             batched_train_dataset.output_shapes)
         images, labels = iterator.get_next()
 
-        # Add a sample image and corresponding label to the summary as a
-        # sanity check.
-        tf.summary.image('sample_image',
-                         tf.reshape(tf.gather(images, 0), [1,299,299,3]))
-        tf.summary.scalar('sample_label', tf.gather(labels, 0))
+        ### Can add a sample image and corresponding label to the summary as a
+        ### sanity check, if desired.
+        # tf.summary.image('sample_image',
+        #                  tf.reshape(tf.gather(images, 0), [1,299,299,3]))
+        # tf.summary.scalar('sample_label', tf.gather(labels, 0))
 
         # Use the following ops to initialize the iterator.
         train_init_op = iterator.make_initializer(batched_train_dataset)
@@ -395,48 +395,48 @@ def finetune(args):
         summary_writer_full = tf.summary.FileWriter(summary_dir_full,
                                                     sess.graph)
 
-        logits_step, full_step = sess.run([logits_epoch, full_epoch])
-        current_step = logits_step + full_step
-        total_epochs = current_step + args['num_epochs']
+        logits_ep, full_ep = sess.run([logits_epoch, full_epoch])
+        current_ep = logits_ep + full_ep
+        total_ep = current_ep + args['num_epochs']
         # Update only the last (FC) layer for multiple epochs.
-        for epoch in range(current_step, total_epochs):
-            logging.info('Starting epoch %d / %d' % (epoch+1, total_epochs+1))
+        for epoch in range(current_ep, total_ep):
+            logging.info('Starting epoch %d / %d' % (epoch, total_ep - 1))
             # Initialize the data iterator on the training dataset.
             sess.run(train_init_op)
+            steps_per_epoch = int(num_train // args['batch_size'])
             # Continue training on this dataset until we run out of batches.
-            for i in range(num_train // args['batch_size']):
+            for i in range(steps_per_epoch):
+                global_step = epoch * steps_per_epoch + i
                 try:
                     if args['freeze_conv_layers']:
-                        _, summary_logits, logits_step =
-                            sess.run([logits_train_op, merged, logits_epoch],
-                                     {is_training: True})
+                        _, _, summary_logits = sess.run(
+                            [logits_train_op, accuracy, merged],
+                            {is_training: True})
                         summary_writer_logits.add_summary(summary_logits,
-                                                          logits_step)
+                                                          global_step)
                     else:
-                        _, summary_full, full_step =
-                            sess.run([full_train_op, merged, full_epoch],
-                                     {is_training: True})
+                        _, _, summary_full = sess.run(
+                            [full_train_op, accuracy, merged],
+                            {is_training: True})
                         summary_writer_full.add_summary(summary_full,
-                                                        full_step)
+                                                        global_step)
                 except tf.errors.OutOfRangeError:
                     logging.info('OutOfRangeError during training.')
                     break
-
             # Save the model every few epochs.
-            if epoch % 20 == 0 or epoch == total_epochs-1:
-                logging.info('Saving model to %s.', save_path))
+            if epoch % 20 == 0 or epoch == total_ep - 1:
+                logging.info('Saving model to %s.' % save_path)
                 saver.save(sess, save_path, global_step=epoch)
-
             # Check accuracy on the training and validation sets.
-            if epoch % 10 == 0 or epoch == total_epochs-1:
+            if epoch % 10 == 0 or epoch == total_ep - 1:
                 # Check training accuracy and loss.
                 sess.run(train_init_op)
                 num_correct, num_samples, total_loss, count = 0, 0, 0, 0
-                for i in range(num_train // args['batch_size']):
+                for i in range(steps_per_epoch):
                     try:
-                        this_loss, correct_pred =
-                            sess.run([loss, correct_prediction],
-                                     {is_training: False})
+                        this_loss, correct_pred = sess.run(
+                            [loss, correct_prediction],
+                            {is_training: False})
                         num_correct += correct_pred.sum()
                         num_samples += correct_pred.shape[0]
                         total_loss += this_loss
@@ -448,11 +448,10 @@ def finetune(args):
                 train_acc = float(num_correct) / num_samples
                 # Calculate the average loss.
                 train_loss = float(total_loss) / count
-
                 # Check validation accuracy and loss.
                 sess.run(val_init_op)
                 num_correct, num_samples = 0, 0
-                for i in range(num_val // args['batch_size']):
+                for i in range(int(num_val // args['batch_size'])):
                     try:
                         correct_pred = sess.run(correct_prediction,
                                                 {is_training: False})
@@ -466,15 +465,20 @@ def finetune(args):
                 logging.info('Train Loss: %f' % train_loss)
                 logging.info('Train Accuracy: %f' % train_acc)
                 logging.info('Val Accuracy: %f' % val_acc)
+            # Increment the appropriate epoch counter.
+            if args['freeze_conv_layers']:
+                sess.run(increment_logits_epoch)
+            else:
+                sess.run(increment_full_epoch)
+            logits_ep, full_ep = sess.run([logits_epoch, full_epoch])
+
 
         # Save this run's hyperparameters and final results (loss, train and
         # validation accuracies) to a params file.
-        params_path = os.path.join(args['run_dir'], 'params.txt')
-        logits_step, full_step = sess.run([logits_epoch, full_epoch])
         params = {}
         params['run_dir'] = args['run_dir']
-        params['logits_epochs'] = logits_step
-        params['full_epochs'] = full_step
+        params['logits_epochs'] = logits_ep
+        params['full_epochs'] = full_ep
         params['learning_rate'] = args['learning_rate']
         params['freeze_conv_layers'] = args['freeze_conv_layers']
         params['epsilon'] = args['epsilon']
@@ -495,5 +499,5 @@ def finetune(args):
         with tf.gfile.Open(vars_path, 'w') as f:
             for item in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES):
                 f.write('%s\n' % item.name)
-            
+
         # Done!
