@@ -288,6 +288,8 @@ def finetune(args):
 
         is_training = tf.placeholder(tf.bool)
 
+
+
         # Load the Inception-v3 model from the Slim library.
         inception = tf.contrib.slim.nets.inception
         with slim.arg_scope(inception.inception_v3_arg_scope(
@@ -306,6 +308,16 @@ def finetune(args):
             exclude=layers_exclude)
         init_fn = tf.contrib.framework.assign_from_checkpoint_fn(
             args['init_path'], variables_to_restore)
+
+        # Create counters for the FC-training epoch and full-training epoch.
+        logits_epoch = tf.Variable(0, trainable=False, name='logits_epoch')
+        reset_logits_epoch = tf.assign(logits_epoch, 0)
+        increment_logits_epoch = tf.assign_add(logits_epoch, 1,
+                                               name='increment_logits_epoch')
+        full_epoch = tf.Variable(0, trainable=False, name='full_epoch')
+        reset_full_epoch = tf.assign(full_epoch, 0)
+        increment_full_epoch = tf.assign_add(full_epoch, 1,
+                                             name='increment_full_epoch')
 
         # Restore all weights variables in the model.
         # Calling function `restore_fn(sess)` will load the pretrained weights
@@ -356,21 +368,10 @@ def finetune(args):
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
         tf.summary.scalar('accuracy', accuracy)
 
-        # Keep track of the global step/epoch.
-        logits_epoch = tf.Variable(0, trainable=False, name='logits_epoch')
-        reset_logits_epoch = tf.assign(logits_epoch, 0)
-        increment_logits_epoch = tf.assign_add(logits_epoch, 1,
-                                              name='increment_logits_epoch')
-        full_epoch = tf.Variable(0, trainable=False, name='full_epoch')
-        reset_full_epoch = tf.assign(full_epoch, 0)
-        increment_full_epoch = tf.assign_add(full_epoch, 1,
-                                            name='increment_full_epoch')
-
         # Merge all summary nodes and create a Saver op to save and restore.
         merged = tf.summary.merge_all()
-        saver = tf.train.Saver(tf.global_variables(), max_to_keep=500)
-
         init = tf.global_variables_initializer()
+        saver = tf.train.Saver(tf.global_variables(), max_to_keep=500)
         tf.get_default_graph().finalize()
 
 
@@ -423,10 +424,6 @@ def finetune(args):
                 except tf.errors.OutOfRangeError:
                     logging.info('OutOfRangeError during training.')
                     break
-            # Save the model every few epochs.
-            if epoch % 20 == 0 or epoch == total_ep - 1:
-                logging.info('Saving model to %s.' % save_path)
-                saver.save(sess, save_path, global_step=epoch)
             # Check accuracy on the training and validation sets.
             if epoch % 10 == 0 or epoch == total_ep - 1:
                 # Check training accuracy and loss.
@@ -471,6 +468,11 @@ def finetune(args):
             else:
                 sess.run(increment_full_epoch)
             logits_ep, full_ep = sess.run([logits_epoch, full_epoch])
+            # Save the model every 20 epochs and on the final epoch.
+            if epoch % 20 == 0 or epoch == total_ep - 1:
+                logging.info('Saving model to %s.' % save_path)
+                saver.save(sess, save_path, global_step=epoch)
+        ### End of session. ###
 
 
         # Save this run's hyperparameters and final results (loss, train and
@@ -492,12 +494,14 @@ def finetune(args):
         # Record lists of trainable variables and regularization losses to
         # verify that all components were included in training.
         losses_path = os.path.join(args['run_dir'], 'regularization_losses.txt')
-        vars_path = os.path.join(args['run_dir'], 'trainable_variables.txt')
+        train_vars_path = os.path.join(args['run_dir'], 'train_variables.txt')
+        global_vars_path = os.path.join(args['run_dir'], 'global_variables.txt')
         with tf.gfile.Open(losses_path, 'w') as f:
             for item in tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES):
                 f.write('%s\n' % item.name)
-        with tf.gfile.Open(vars_path, 'w') as f:
+        with tf.gfile.Open(train_vars_path, 'w') as f:
             for item in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES):
                 f.write('%s\n' % item.name)
-
-        # Done!
+        with tf.gfile.Open(global_vars_path, 'w') as f:
+            for item in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES):
+                f.write('%s\n' % item.name)
