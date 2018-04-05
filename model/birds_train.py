@@ -175,13 +175,10 @@ def probs_to_ranks(array):
 def finetune(args):
     """Finetunes Inception-v3 on labeled spectrograms."""
 
-    ### Define the filepaths and directories used during training.
-    # Directory containing training and validation data:
     train_dir = os.path.join(args['data_dir'], 'train')
-    # Directories where we store checkpoints and logs from this training run:
-    save_dir = os.path.join(args['run_dir'], 'save')          # Save checkpoints
-    summary_dir = os.path.join(args['run_dir'], 'summary')    # Save summaries
-    params_path = os.path.join(args['run_dir'], 'params.txt') # Save hyperparams
+    save_dir = os.path.join(args['run_dir'], 'save')          # checkpoints
+    summary_dir = os.path.join(args['run_dir'], 'summary')    # logs/summaries
+    params_path = os.path.join(args['run_dir'], 'params.txt') # hyperparameters
 
     summary_dir_logits = os.path.join(summary_dir, 'logits')
     summary_dir_full = os.path.join(summary_dir, 'full')
@@ -192,19 +189,19 @@ def finetune(args):
 
     save_path = os.path.join(save_dir, 'full')
 
-    # Find directory or path containing checkpoint to restore:
+    # Find directory or path containing checkpoint to restore.
     restore_path = args['restore_path']
     restore_dir = args['restore_dir']
     if args['restore_path'] is not None:
         use_restore_path = True
     else:
         use_restore_path = False
-        if restore_dir is None:
-            restore_dir = save_dir  # Default to most recently saved checkpoint
+        if restore_dir is None:     # Defaults to save directory of current run
+            restore_dir = save_dir
 
     # Get the list of filenames and corresponding list of labels for training
-    # and validation. `num_split` is the number of spectrograms from
-    # each class in the training set to divert to the validation set.
+    # and validation. `num_split` is the number of spectrograms from each class
+    # in the training set that are diverted to the validation set.
     logging.info('Loading dataset from %s...' % train_dir)
     train_filenames, train_labels, val_filenames, val_labels = \
         list_images_split(train_dir, num_split=2)
@@ -213,10 +210,8 @@ def finetune(args):
     logging.info("%d train images and %d validation images found." %
                  (num_train, num_val))
 
-    # Number of classes is set of training labels plus one (dummy class).
-    num_classes = len(set(train_labels)) + 1
+    num_classes = len(set(train_labels)) + 1    # Need to add 1 for dummy class
 
-    ### Define the graph.
     logging.info("Building graph...")
     g1 = tf.Graph()
     with g1.as_default():
@@ -249,21 +244,18 @@ def finetune(args):
             image = tf.slice(image, offsets, cropped_shape)
             image.set_shape([299, 299, 3])
 
-            # (4) Standard preprocessing for Inception-v3 net.
-            #     ...scale `0 -> 1` pixel range to `-1 -> 1`
+            # (4) Standard preprocessing for Inception-v3 net:
+            #     Scale `0 -> 1` range for each pixel to `-1 -> 1`.
             image = tf.subtract(image, 0.5)
             image = tf.multiply(image, 2.0)
             return image, label
 
-        # Load training dataset from `train_filenames` then shuffle and batch the data.
         train_dataset = tf.data.Dataset.from_tensor_slices((train_filenames,
                                                             train_labels))
         train_dataset = train_dataset.shuffle(buffer_size=len(train_filenames))
         train_dataset = train_dataset.map(_parse_function,
                                           num_parallel_calls=args['num_workers'])
         batched_train_dataset = train_dataset.batch(args['batch_size'])
-
-        # Load validation dataset from `val_filenames` then batch the data.
         val_dataset = tf.data.Dataset.from_tensor_slices((val_filenames,
                                                           val_labels))
         val_dataset = val_dataset.map(_parse_function,
@@ -282,13 +274,11 @@ def finetune(args):
         #                  tf.reshape(tf.gather(images, 0), [1,299,299,3]))
         # tf.summary.scalar('sample_label', tf.gather(labels, 0))
 
-        # Use the following ops to initialize the iterator.
+        # Use these ops to initialize the iterator for the desired dataset.
         train_init_op = iterator.make_initializer(batched_train_dataset)
         val_init_op = iterator.make_initializer(batched_val_dataset)
 
         is_training = tf.placeholder(tf.bool)
-
-
 
         # Load the Inception-v3 model from the Slim library.
         inception = tf.contrib.slim.nets.inception
@@ -301,7 +291,7 @@ def finetune(args):
 
         # Restore only the layers before Logits/AuxLogits.
         # Calling `init_fn(sess)` will load the pretrained weights from the
-        # checkpoint file at args['model_path'].
+        # checkpoint file at args['init_path'].
         layers_exclude = ['InceptionV3/Logits', 'InceptionV3/AuxLogits']
         ## layers_exclude += ['logits_epoch', 'full_epoch']
         variables_to_restore = tf.contrib.framework.get_variables_to_restore(
@@ -309,7 +299,7 @@ def finetune(args):
         init_fn = tf.contrib.framework.assign_from_checkpoint_fn(
             args['init_path'], variables_to_restore)
 
-        # Create counters for the FC-training epoch and full-training epoch.
+        # Epoch counters for the FC-training period and full-training period:
         logits_epoch = tf.Variable(0, trainable=False, name='logits_epoch')
         reset_logits_epoch = tf.assign(logits_epoch, 0)
         increment_logits_epoch = tf.assign_add(logits_epoch, 1,
@@ -319,9 +309,8 @@ def finetune(args):
         increment_full_epoch = tf.assign_add(full_epoch, 1,
                                              name='increment_full_epoch')
 
-        # Restore all weights variables in the model.
-        # Calling function `restore_fn(sess)` will load the pretrained weights
-        # from the checkpoint file at args['model_path'].
+        # Restore all weights variables in the model from the latest checkpoint
+        # in a directory (`restore_dir_fn`) or a filepath (`restore_path_fn`).
         ## vars_exclude = ['logits_epoch', 'full_epoch']
         ## all_variables = tf.contrib.framework.get_variables_to_restore(
         ##     exclude=vars_exclude)
@@ -331,13 +320,11 @@ def finetune(args):
         restore_path_fn = tf.contrib.framework.assign_from_checkpoint_fn(
             restore_path, all_variables)
 
-        # Use 'logits_init' to initialize the final fully-connected layer
-        # (logits) for finetuning.
+        # Use `logits_init` to initialize the final fully-connected layer.
         logits_variables = tf.contrib.framework.get_variables('InceptionV3/Logits')
         logits_variables += tf.contrib.framework.get_variables('InceptionV3/AuxLogits')
         logits_init = tf.variables_initializer(logits_variables)
 
-        # Define the loss function for training and create a summary node.
         tf.losses.sparse_softmax_cross_entropy(labels=labels,
                                                logits=logits,
                                                weights=1.0)
@@ -347,17 +334,15 @@ def finetune(args):
         loss = tf.losses.get_total_loss()
         tf.summary.scalar('loss', loss)
 
-        # Create an op to train only the re-initialized last (FC) layer.
-        # We run minimize the loss only with respect to the weights
-        # in this layer (weights and bias).
-        logits_optimizer = tf.train.AdamOptimizer(learning_rate=args['learning_rate'],
-                                                  epsilon=args['epsilon'])
-        logits_train_op = logits_optimizer.minimize(loss, var_list=logits_variables)
+        # Use this optimizer to train only the re-initialized final (FC) layer.
+        logits_optimizer = tf.train.AdamOptimizer(
+            learning_rate=args['learning_rate'], epsilon=args['epsilon'])
+        logits_train_op = logits_optimizer.minimize(
+            loss, var_list=logits_variables)
 
-        # Create an op to train all model layers.
-        # We run minimize the loss with respect to all weight variables.
-        full_optimizer = tf.train.AdamOptimizer(learning_rate=args['learning_rate'],
-                                                epsilon=args['epsilon'])
+        # Use this optimizer to train all model layers.
+        full_optimizer = tf.train.AdamOptimizer(
+            learning_rate=args['learning_rate'], epsilon=args['epsilon'])
         full_train_op = full_optimizer.minimize(loss)
 
         # Compute some evaluation metrics.
@@ -368,7 +353,6 @@ def finetune(args):
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
         tf.summary.scalar('accuracy', accuracy)
 
-        # Merge all summary nodes and create a Saver op to save and restore.
         merged = tf.summary.merge_all()
         init = tf.global_variables_initializer()
         saver = tf.train.Saver(tf.global_variables(), max_to_keep=500)
@@ -377,12 +361,12 @@ def finetune(args):
 
     with tf.Session(graph=g1) as sess:
         sess.run(init)
-        # Initialize or restore model weights from the appropriate checkpoint.
-        if args['initialize']:
+        if args['initialize']:     # initialize pre-FC weights using the
+                                   # pretrained ImageNet weights
             logging.info('Restoring model (except final layer) from %s...' %
                          args['init_path'])
-            init_fn(sess)    # Load pretrained weights from ImageNet checkpoint.
-            sess.run(logits_init)  # Initialize the new final (FC) layer.
+            init_fn(sess)
+            sess.run(logits_init)  # initialize the new FC layer
         elif use_restore_path:
             logging.info('Restoring model from %s...' % restore_path)
             restore_path_fn(sess)
@@ -399,13 +383,12 @@ def finetune(args):
         logits_ep, full_ep = sess.run([logits_epoch, full_epoch])
         current_ep = logits_ep + full_ep
         total_ep = current_ep + args['num_epochs']
-        # Update only the last (FC) layer for multiple epochs.
+
         for epoch in range(current_ep, total_ep):
             logging.info('Starting epoch %d / %d' % (epoch, total_ep - 1))
-            # Initialize the data iterator on the training dataset.
             sess.run(train_init_op)
             steps_per_epoch = int(num_train // args['batch_size'])
-            # Continue training on this dataset until we run out of batches.
+
             for i in range(steps_per_epoch):
                 global_step = epoch * steps_per_epoch + i
                 try:
@@ -424,6 +407,7 @@ def finetune(args):
                 except tf.errors.OutOfRangeError:
                     logging.info('OutOfRangeError during training.')
                     break
+
             # Check accuracy on the training and validation sets.
             if epoch % 10 == 0 or epoch == total_ep - 1:
                 # Check training accuracy and loss.
@@ -445,6 +429,7 @@ def finetune(args):
                 train_acc = float(num_correct) / num_samples
                 # Calculate the average loss.
                 train_loss = float(total_loss) / count
+
                 # Check validation accuracy and loss.
                 sess.run(val_init_op)
                 num_correct, num_samples = 0, 0
@@ -462,18 +447,19 @@ def finetune(args):
                 logging.info('Train Loss: %f' % train_loss)
                 logging.info('Train Accuracy: %f' % train_acc)
                 logging.info('Val Accuracy: %f' % val_acc)
+
             # Increment the appropriate epoch counter.
             if args['freeze_conv_layers']:
                 sess.run(increment_logits_epoch)
             else:
                 sess.run(increment_full_epoch)
             logits_ep, full_ep = sess.run([logits_epoch, full_epoch])
-            # Save the model every 20 epochs and on the final epoch.
+            # Save the model every 20 epochs or on the final epoch.
             if epoch % 20 == 0 or epoch == total_ep - 1:
                 logging.info('Saving model to %s.' % save_path)
                 saver.save(sess, save_path, global_step=epoch)
-        ### End of session. ###
 
+        ### End of session. ###
 
         # Save this run's hyperparameters and final results (loss, train and
         # validation accuracies) to a params file.
@@ -492,7 +478,7 @@ def finetune(args):
                      params_path)
 
         # Record lists of trainable variables and regularization losses to
-        # verify that all components were included in training.
+        # verify that all components were correctly included in training.
         losses_path = os.path.join(args['run_dir'], 'regularization_losses.txt')
         train_vars_path = os.path.join(args['run_dir'], 'train_variables.txt')
         global_vars_path = os.path.join(args['run_dir'], 'global_variables.txt')
