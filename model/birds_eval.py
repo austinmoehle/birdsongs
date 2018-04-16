@@ -114,6 +114,9 @@ def test(args):
     num_classes = len(set(test_labels)) + 1
     top_k = 5
 
+    # Parameters for Batch Normalization layers.
+    batch_norm_params = {'decay': 0.9997, 'epsilon': 0.001}    
+
     ### Define the graph.
     logging.info("Building graph...")
     g2 = tf.Graph()
@@ -170,7 +173,9 @@ def test(args):
         # Load the Inception-v3 model from the Slim library.
         inception = tf.contrib.slim.nets.inception
         with slim.arg_scope(inception.inception_v3_arg_scope(
-                            weight_decay=0.00004)):
+                            weight_decay=args['weight_decay'],
+                            batch_norm_decay=batch_norm_params['decay'],
+                            batch_norm_epsilon=batch_norm_params['epsilon'])):
             logits, end_points = inception.inception_v3(images,
                 num_classes=num_classes,
                 is_training=is_training,

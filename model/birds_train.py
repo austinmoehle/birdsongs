@@ -212,6 +212,9 @@ def finetune(args):
 
     num_classes = len(set(train_labels)) + 1    # Need to add 1 for dummy class.
 
+    # Parameters for Batch Normalization layers.
+    batch_norm_params = {'decay': 0.9997, 'epsilon': 0.001}
+
     logging.info("Building graph...")
     g1 = tf.Graph()
     with g1.as_default():
@@ -283,12 +286,13 @@ def finetune(args):
         # Load the Inception-v3 model from the Slim library.
         inception = tf.contrib.slim.nets.inception
         with slim.arg_scope(inception.inception_v3_arg_scope(
-                            weight_decay=args['weight_decay'])):
+                            weight_decay=args['weight_decay'],
+                            batch_norm_decay=batch_norm_params['decay'],
+                            batch_norm_epsilon=batch_norm_params['epsilon'])):
             logits, end_points = inception.inception_v3(images,
                 num_classes=num_classes,
                 is_training=is_training,
                 dropout_keep_prob=args['dropout_keep_prob'])
-
 
         # Set epoch counters for the FC-only and full-net training phases:
         logits_epoch = tf.Variable(0, trainable=False, name='logits_epoch')
@@ -333,16 +337,20 @@ def finetune(args):
         loss = tf.losses.get_total_loss()
         tf.summary.scalar('loss', loss)
 
+        # BatchNorm parameters in `UPDATE_OPS` must be updated separately.
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         # Use this optimizer to train only the re-initialized final (FC) layer.
         logits_optimizer = tf.train.AdamOptimizer(
             learning_rate=args['learning_rate'], epsilon=args['epsilon'])
-        logits_train_op = logits_optimizer.minimize(
-            loss, var_list=logits_variables)
+        with tf.control_dependencies(update_ops):
+            logits_train_op = logits_optimizer.minimize(
+                loss, var_list=logits_variables)
 
         # Use this optimizer to train all model layers.
         full_optimizer = tf.train.AdamOptimizer(
             learning_rate=args['learning_rate'], epsilon=args['epsilon'])
-        full_train_op = full_optimizer.minimize(loss)
+        with tf.control_dependencies(update_ops):
+            full_train_op = full_optimizer.minimize(loss)
 
         # Compute some evaluation metrics.
         kw_predictions = tf.argmax(end_points['Predictions'], 1)
