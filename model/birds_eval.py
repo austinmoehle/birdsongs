@@ -107,7 +107,7 @@ def test(args):
     # each class in the training set to divert to the validation set.
     logging.info('Loading dataset from `test_dir`...')
     test_filenames, test_labels = list_images(test_dir)
-    num_test = len(train_filenames)
+    num_test = len(test_filenames)
     logging.info("%d test images over %d classes found." %
                  (num_test, len(set(test_labels))))
     # Number of classes used by Inception is set of labels plus 1 (dummy class).
@@ -216,7 +216,7 @@ def test(args):
         total_loss, count = 0, 0
         num_correct, num_samples = 0, 0
         top5_acc = 0
-        for i in range(num_test / args['batch_size']):
+        for i in range(int(num_test // args['batch_size'])):
             try:
                 this_loss, correct_pred, top5_sample_acc = sess.run(
                     [loss, correct_prediction, top5_accuracy],

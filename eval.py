@@ -28,7 +28,7 @@ import logging
 parser = argparse.ArgumentParser(description='Inception-v3 Training')
 parser.add_argument('--data_dir', default='data',
                     help="Directory containing `train/`, `test/`, `labels.txt`.")
-parser.add_argument('--eval_dir', default='runs/0/save/full',
+parser.add_argument('--eval_dir', default='runs/0/save',
                     help="Location of model checkpoint to be evaluated.")
 parser.add_argument('--batch_size', default=8, type=int,
                     help="Batch size for evaluation.")

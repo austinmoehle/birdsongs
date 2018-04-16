@@ -201,7 +201,7 @@ def finetune(args):
 
     # Get the list of filenames and corresponding list of labels for training
     # and validation. `num_split` is the number of spectrograms from each class
-    # in the training set that are diverted to the validation set.
+    # that are diverted to the validation set.
     logging.info('Loading dataset from %s...' % train_dir)
     train_filenames, train_labels, val_filenames, val_labels = \
         list_images_split(train_dir, num_split=2)
@@ -210,7 +210,7 @@ def finetune(args):
     logging.info("%d train images and %d validation images found." %
                  (num_train, num_val))
 
-    num_classes = len(set(train_labels)) + 1    # Need to add 1 for dummy class
+    num_classes = len(set(train_labels)) + 1    # Need to add 1 for dummy class.
 
     logging.info("Building graph...")
     g1 = tf.Graph()
@@ -289,6 +289,17 @@ def finetune(args):
                 is_training=is_training,
                 dropout_keep_prob=args['dropout_keep_prob'])
 
+
+        # Set epoch counters for the FC-only and full-net training phases:
+        logits_epoch = tf.Variable(0, trainable=False, name='logits_epoch')
+        reset_logits_epoch = tf.assign(logits_epoch, 0)
+        increment_logits_epoch = tf.assign_add(logits_epoch, 1,
+                                               name='increment_logits_epoch')
+        full_epoch = tf.Variable(0, trainable=False, name='full_epoch')
+        reset_full_epoch = tf.assign(full_epoch, 0)
+        increment_full_epoch = tf.assign_add(full_epoch, 1,
+                                             name='increment_full_epoch')
+
         # Restore only the layers before Logits/AuxLogits.
         # Calling `init_fn(sess)` will load the pretrained weights from the
         # checkpoint file at args['init_path'].
@@ -299,32 +310,20 @@ def finetune(args):
         init_fn = tf.contrib.framework.assign_from_checkpoint_fn(
             args['init_path'], variables_to_restore)
 
-        # Epoch counters for the FC-training period and full-training period:
-        logits_epoch = tf.Variable(0, trainable=False, name='logits_epoch')
-        reset_logits_epoch = tf.assign(logits_epoch, 0)
-        increment_logits_epoch = tf.assign_add(logits_epoch, 1,
-                                               name='increment_logits_epoch')
-        full_epoch = tf.Variable(0, trainable=False, name='full_epoch')
-        reset_full_epoch = tf.assign(full_epoch, 0)
-        increment_full_epoch = tf.assign_add(full_epoch, 1,
-                                             name='increment_full_epoch')
+        # Use `logits_init` to initialize the final fully-connected layer.
+        logits_variables = tf.contrib.framework.get_variables('InceptionV3/Logits')
+        logits_variables += tf.contrib.framework.get_variables('InceptionV3/AuxLogits')
+        logits_init = tf.variables_initializer(logits_variables)
 
         # Restore all weights variables in the model from the latest checkpoint
         # in a directory (`restore_dir_fn`) or a filepath (`restore_path_fn`).
-        ## vars_exclude = ['logits_epoch', 'full_epoch']
-        ## all_variables = tf.contrib.framework.get_variables_to_restore(
-        ##     exclude=vars_exclude)
         all_variables = tf.contrib.framework.get_variables_to_restore()
         restore_dir_fn = tf.contrib.framework.assign_from_checkpoint_fn(
             tf.train.latest_checkpoint(restore_dir), all_variables)
         restore_path_fn = tf.contrib.framework.assign_from_checkpoint_fn(
             restore_path, all_variables)
 
-        # Use `logits_init` to initialize the final fully-connected layer.
-        logits_variables = tf.contrib.framework.get_variables('InceptionV3/Logits')
-        logits_variables += tf.contrib.framework.get_variables('InceptionV3/AuxLogits')
-        logits_init = tf.variables_initializer(logits_variables)
-
+        # Define losses (Logits and AuxLogits).
         tf.losses.sparse_softmax_cross_entropy(labels=labels,
                                                logits=logits,
                                                weights=1.0)
