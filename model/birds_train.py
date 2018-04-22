@@ -196,7 +196,7 @@ def finetune(args):
         use_restore_path = True
     else:
         use_restore_path = False
-        if restore_dir is None:     # Defaults to save directory of current run
+        if restore_dir is None:     # defaults to save directory of current run
             restore_dir = save_dir
 
     # Get the list of filenames and corresponding list of labels for training
@@ -210,9 +210,9 @@ def finetune(args):
     logging.info("%d train images and %d validation images found." %
                  (num_train, num_val))
 
-    num_classes = len(set(train_labels)) + 1    # Need to add 1 for dummy class.
+    num_classes = len(set(train_labels)) + 1   # need to add 1 for dummy class
 
-    # Parameters for Batch Normalization layers.
+    # Parameters for batch normalization layers.
     batch_norm_params = {'decay': 0.9997, 'epsilon': 0.001}
 
     logging.info("Building graph...")
@@ -224,7 +224,8 @@ def finetune(args):
             # (1) Decode the image from jpg format.
             image_string = tf.read_file(filename)
             image_decoded = tf.image.decode_jpeg(image_string, channels=3)
-            image = tf.image.convert_image_dtype(image_decoded, dtype=tf.float32)
+            image = tf.image.convert_image_dtype(image_decoded,
+                                                 dtype=tf.float32)
             image.set_shape([224, 341, 3])
 
             # (2) Resize the image 299x319.
@@ -240,9 +241,11 @@ def finetune(args):
             max_offset_height = tf.reshape(new_height - crop_height + 1, [])
             max_offset_width = tf.reshape(new_width - crop_width + 1, [])
             offset_height = tf.constant(0, dtype=tf.int32)
-            offset_width = tf.random_uniform([], maxval=max_offset_width, dtype=tf.int32)
+            offset_width = tf.random_uniform([], maxval=max_offset_width,
+                                             dtype=tf.int32)
             original_shape = tf.shape(image)
-            cropped_shape = tf.stack([crop_height, crop_width, original_shape[2]])
+            cropped_shape = tf.stack([crop_height, crop_width,
+                                      original_shape[2]])
             offsets = tf.to_int32(tf.stack([offset_height, offset_width, 0]))
             image = tf.slice(image, offsets, cropped_shape)
             image.set_shape([299, 299, 3])
@@ -257,16 +260,16 @@ def finetune(args):
                                                             train_labels))
         train_dataset = train_dataset.shuffle(buffer_size=len(train_filenames))
         train_dataset = train_dataset.map(_parse_function,
-                                          num_parallel_calls=args['num_workers'])
+                                    num_parallel_calls=args['num_workers'])
         batched_train_dataset = train_dataset.batch(args['batch_size'])
         val_dataset = tf.data.Dataset.from_tensor_slices((val_filenames,
                                                           val_labels))
         val_dataset = val_dataset.map(_parse_function,
-                                      num_parallel_calls=args['num_workers'])
+                                num_parallel_calls=args['num_workers'])
         batched_val_dataset = val_dataset.batch(args['batch_size'])
 
         # Define an iterator that can operate on either dataset.
-        iterator = tf.contrib.data.Iterator.from_structure(
+        iterator = tf.data.Iterator.from_structure(
             batched_train_dataset.output_types,
             batched_train_dataset.output_shapes)
         images, labels = iterator.get_next()
@@ -294,7 +297,7 @@ def finetune(args):
                 is_training=is_training,
                 dropout_keep_prob=args['dropout_keep_prob'])
 
-        # Set epoch counters for the FC-only and full-net training phases:
+        # Set epoch counters for the FC-only and full-net training phases.
         logits_epoch = tf.Variable(0, trainable=False, name='logits_epoch')
         reset_logits_epoch = tf.assign(logits_epoch, 0)
         increment_logits_epoch = tf.assign_add(logits_epoch, 1,
@@ -304,16 +307,26 @@ def finetune(args):
         increment_full_epoch = tf.assign_add(full_epoch, 1,
                                              name='increment_full_epoch')
 
+        # Set run counters (used to split TensorBoard summaries into separate
+        # subdirectories per training run).
+        logits_run = tf.Variable(0, trainable=False, name='logits_run')
+        reset_logits_run = tf.assign(logits_run, 0)
+        increment_logits_run = tf.assign_add(logits_run, 1,
+                                             name='increment_logits_run')
+        full_run = tf.Variable(0, trainable=False, name='full_run')
+        reset_full_run = tf.assign(full_run, 0)
+        increment_full_run = tf.assign_add(full_run, 1,
+                                           name='increment_full_run')
+
         # Restore only the layers before Logits/AuxLogits.
         # Calling `init_fn(sess)` will load the pretrained weights from the
         # checkpoint file at args['init_path'].
         layers_exclude = ['InceptionV3/Logits', 'InceptionV3/AuxLogits']
-        ## layers_exclude += ['logits_epoch', 'full_epoch']
+        layers_exclude += ['logits_epoch', 'full_epoch', 'logits_run', 'full_run']
         variables_to_restore = tf.contrib.framework.get_variables_to_restore(
             exclude=layers_exclude)
         init_fn = tf.contrib.framework.assign_from_checkpoint_fn(
             args['init_path'], variables_to_restore)
-
         # Use `logits_init` to initialize the final fully-connected layer.
         logits_variables = tf.contrib.framework.get_variables('InceptionV3/Logits')
         logits_variables += tf.contrib.framework.get_variables('InceptionV3/AuxLogits')
@@ -374,18 +387,38 @@ def finetune(args):
                          args['init_path'])
             init_fn(sess)
             sess.run(logits_init)  # initialize the new FC layer
-        elif use_restore_path:
-            logging.info('Restoring model from %s...' % restore_path)
-            restore_path_fn(sess)
+            # Define TensorBoard summary writers.
+            if args['freeze_conv_layers']:
+                logits_r = sess.run(logits_run)
+                summary_writer = tf.summary.FileWriter(
+                    os.path.join(summary_dir_logits, str(logits_r)), sess.graph)
+            else:
+                full_r = sess.run(full_run)
+                summary_writer = tf.summary.FileWriter(
+                    os.path.join(summary_dir_full, str(full_r)), sess.graph)
         else:
-            logging.info('Restoring model from latest checkpoint in %s...' %
-                         restore_dir)
-            restore_dir_fn(sess)
-
-        summary_writer_logits = tf.summary.FileWriter(summary_dir_logits,
-                                                      sess.graph)
-        summary_writer_full = tf.summary.FileWriter(summary_dir_full,
-                                                    sess.graph)
+            # Restore model from appropriate directory or filepath.
+            if use_restore_path:
+                logging.info('Restoring model from %s...' % restore_path)
+                restore_path_fn(sess)
+            else:
+                logging.info('Restoring model from latest checkpoint in %s...' %
+                             restore_dir)
+                restore_dir_fn(sess)
+            # Increment the run counters for TensorBoard summaries then
+            # define TensorBoard summary writers.
+            if args['freeze_conv_layers']:
+                logits_r = sess.run(logits_run)
+                sess.run(increment_logits_run)
+                logging.info('Logits run counter is %d.' % logits_r)
+                summary_writer = tf.summary.FileWriter(
+                    os.path.join(summary_dir_logits, str(logits_r)), sess.graph)
+            else:
+                full_r = sess.run(full_run)
+                sess.run(increment_full_run)
+                logging.info('Full run counter is %d.' % full_r)
+                summary_writer = tf.summary.FileWriter(
+                    os.path.join(summary_dir_full, str(full_r)), sess.graph)
 
         logits_ep, full_ep = sess.run([logits_epoch, full_epoch])
         current_ep = logits_ep + full_ep
@@ -403,14 +436,12 @@ def finetune(args):
                         _, _, summary_logits = sess.run(
                             [logits_train_op, accuracy, merged],
                             {is_training: True})
-                        summary_writer_logits.add_summary(summary_logits,
-                                                          global_step)
+                        summary_writer.add_summary(summary_logits, global_step)
                     else:
                         _, _, summary_full = sess.run(
                             [full_train_op, accuracy, merged],
                             {is_training: True})
-                        summary_writer_full.add_summary(summary_full,
-                                                        global_step)
+                        summary_writer.add_summary(summary_full, global_step)
                 except tf.errors.OutOfRangeError:
                     logging.info('OutOfRangeError during training.')
                     break

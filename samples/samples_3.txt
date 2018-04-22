@@ -1,0 +1,2 @@
+True Class: /home/austin/projects/bob/snips/48/samples/3.wav
+Prediction: /home/austin/projects/bob/snips/48/samples/4.wav

@@ -115,7 +115,7 @@ def test(args):
     top_k = 5
 
     # Parameters for Batch Normalization layers.
-    batch_norm_params = {'decay': 0.9997, 'epsilon': 0.001}    
+    batch_norm_params = {'decay': 0.9997, 'epsilon': 0.001}
 
     ### Define the graph.
     logging.info("Building graph...")
@@ -162,7 +162,7 @@ def test(args):
         val_dataset = val_dataset.map(_parse_function,
                                       num_parallel_calls=args['num_workers'])
         batched_val_dataset = val_dataset.batch(args['batch_size'])
-        iterator = tf.contrib.data.Iterator.from_structure(
+        iterator = tf.data.Iterator.from_structure(
             batched_val_dataset.output_types,
             batched_val_dataset.output_shapes)
         images, labels = iterator.get_next()
@@ -179,7 +179,7 @@ def test(args):
             logits, end_points = inception.inception_v3(images,
                 num_classes=num_classes,
                 is_training=is_training,
-                dropout_keep_prob=0.8)
+                dropout_keep_prob=args['dropout_keep_prob'])
 
         # Restore all weights variables in the model.
         # Calling function `restore_fn(sess)` will load the pretrained weights

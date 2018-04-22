@@ -62,15 +62,15 @@ parser.add_argument('--restore_path', default=None,
                     help="Path of saved model to restore.")
 parser.add_argument('--batch_size', default=8, type=int,
                     help="Batch size.")
-parser.add_argument('--num_workers', default=4, type=int,
+parser.add_argument('--num_workers', default=2, type=int,
                     help="Number of workers.")
-parser.add_argument('--num_epochs', default=20, type=int,
+parser.add_argument('--num_epochs', default=1, type=int,
                     help="Number of epochs to train.")
 parser.add_argument('-f', '--freeze_conv_layers', action='store_true',
                     help="Whether to freeze convolutional layers during training.")
 parser.add_argument('--learning_rate', default=1e-5, type=float,
-                    help="Learning rate for training.")
-parser.add_argument('--epsilon', default=0.01, type=float,
+                    help="Learning rate parameter for Adam optimizer.")
+parser.add_argument('--epsilon', default=1e-8, type=float,
                     help="Epsilon parameter for Adam optimizer.")
 parser.add_argument('--dropout_keep_prob', default=0.8, type=float,
                     help="Dropout keep_prob.")
