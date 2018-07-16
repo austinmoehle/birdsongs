@@ -90,16 +90,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# Notes:
-# approx time to run training
-####LOGITS
-# 10 epochs, acc every 5:  0:24:32
-# 10 epochs, acc every 1:  0:41:38
-# 30 epochs, acc every 10: 1:05:28
-
-# With balancing, 200 epochs, acc every 20: 6:45:15
-
-
-####FULL NET
-# 25x2 epochs, acc every 20: 4:49:58 (10 e/hr)

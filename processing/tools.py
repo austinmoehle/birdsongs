@@ -140,7 +140,7 @@ def unpack_raw_master_set(directories, target, match='Song.mp3', dummy=True,
            f.write('%s\n' % bird)
     with open(counts_path, 'w') as f:
         for bird, count in reversed(sorted(bird_counts.iteritems(),
-                                    key=lambda (k,v): (v,k))):
+                                    key=lambda k_v: (k_v[1], k_v[0]))):
             f.write('%s: %d\n' % (bird, count))
 
 
